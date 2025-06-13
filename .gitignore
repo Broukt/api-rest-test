@@ -1,0 +1,13 @@
+# Binaries
+/bin/
+
+# Dependencies
+/pkg/mod/
+
+# Build artifacts
+*.exe
+*.log
+*.out
+
+# Environment files
+.env
