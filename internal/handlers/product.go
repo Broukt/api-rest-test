@@ -1,39 +1,75 @@
 package handlers
 
 import (
+	"encoding/json"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
-
-	"github.com/gin-gonic/gin"
 
 	"github.com/Broukt/api-rest-test/internal/database"
 	"github.com/Broukt/api-rest-test/internal/models"
 )
 
-// RegisterProductRoutes registers all product related endpoints.
-func RegisterProductRoutes(r *gin.Engine) {
-	g := r.Group("/products")
-	g.GET("", getProducts)
-	g.GET("/:id", getProductByID)
-	g.POST("", createProduct)
-	g.PUT("/:id", updateProductByID)
-	g.DELETE("/:id", deleteProductByID)
+// RegisterProductRoutes registers all product related endpoints using net/http.
+func RegisterProductRoutes(mux *http.ServeMux) {
+	mux.HandleFunc("/products", productsHandler)
+	mux.HandleFunc("/products/", productHandler)
 }
 
-func getProductByID(c *gin.Context) {
-	id := c.Param("id")
-	var product models.Product
-	if err := database.DB.First(&product, "id = ?", id).Error; err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "product not found"})
+type errorResponse struct {
+	Error string `json:"error"`
+}
+
+func writeJSON(w http.ResponseWriter, status int, data interface{}) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	if data != nil {
+		_ = json.NewEncoder(w).Encode(data)
+	}
+}
+
+func productsHandler(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		getProducts(w, r)
+	case http.MethodPost:
+		createProduct(w, r)
+	default:
+		w.WriteHeader(http.StatusMethodNotAllowed)
+	}
+}
+
+func productHandler(w http.ResponseWriter, r *http.Request) {
+	id := strings.TrimPrefix(r.URL.Path, "/products/")
+	if id == "" || strings.Contains(id, "/") {
+		http.NotFound(w, r)
 		return
 	}
 
-	c.JSON(http.StatusOK, product)
+	switch r.Method {
+	case http.MethodGet:
+		getProductByID(w, r, id)
+	case http.MethodPut:
+		updateProductByID(w, r, id)
+	case http.MethodDelete:
+		deleteProductByID(w, r, id)
+	default:
+		w.WriteHeader(http.StatusMethodNotAllowed)
+	}
 }
 
-func getProducts(c *gin.Context) {
-	page, err := strconv.Atoi(c.DefaultQuery("page", "1"))
+func getProductByID(w http.ResponseWriter, r *http.Request, id string) {
+	var product models.Product
+	if err := database.DB.First(&product, "id = ?", id).Error; err != nil {
+		writeJSON(w, http.StatusNotFound, errorResponse{Error: "product not found"})
+		return
+	}
+	writeJSON(w, http.StatusOK, product)
+}
+
+func getProducts(w http.ResponseWriter, r *http.Request) {
+	page, err := strconv.Atoi(r.URL.Query().Get("page"))
 	if err != nil || page < 1 {
 		page = 1
 	}
@@ -42,33 +78,37 @@ func getProducts(c *gin.Context) {
 
 	var products []models.Product
 	if err := database.DB.Limit(limit).Offset(offset).Find(&products).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		writeJSON(w, http.StatusInternalServerError, errorResponse{Error: err.Error()})
 		return
 	}
 
-	c.JSON(http.StatusOK, products)
+	writeJSON(w, http.StatusOK, products)
 }
 
 type createProductInput struct {
-	Name     string  `json:"name" binding:"required"`
-	SKU      string  `json:"sku" binding:"required"`
-	Price    float64 `json:"price" binding:"required"`
-	Stock    int     `json:"stock" binding:"required"`
-	IsActive *bool   `json:"isActive"`
+	Name     *string  `json:"name"`
+	SKU      *string  `json:"sku"`
+	Price    *float64 `json:"price"`
+	Stock    *int     `json:"stock"`
+	IsActive *bool    `json:"isActive"`
 }
 
-func createProduct(c *gin.Context) {
+func createProduct(w http.ResponseWriter, r *http.Request) {
 	var input createProductInput
-	if err := c.ShouldBindJSON(&input); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+		writeJSON(w, http.StatusBadRequest, errorResponse{Error: err.Error()})
+		return
+	}
+	if input.Name == nil || input.SKU == nil || input.Price == nil || input.Stock == nil {
+		writeJSON(w, http.StatusBadRequest, errorResponse{Error: "missing required fields"})
 		return
 	}
 
 	p := models.Product{
-		Name:  input.Name,
-		SKU:   input.SKU,
-		Price: input.Price,
-		Stock: input.Stock,
+		Name:  *input.Name,
+		SKU:   *input.SKU,
+		Price: *input.Price,
+		Stock: *input.Stock,
 	}
 
 	if input.IsActive != nil && !*input.IsActive {
@@ -77,11 +117,11 @@ func createProduct(c *gin.Context) {
 	}
 
 	if err := database.DB.Create(&p).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		writeJSON(w, http.StatusInternalServerError, errorResponse{Error: err.Error()})
 		return
 	}
 
-	c.JSON(http.StatusCreated, p)
+	writeJSON(w, http.StatusCreated, p)
 }
 
 type updateProductInput struct {
@@ -91,17 +131,16 @@ type updateProductInput struct {
 	Stock *int     `json:"stock"`
 }
 
-func updateProductByID(c *gin.Context) {
-	id := c.Param("id")
+func updateProductByID(w http.ResponseWriter, r *http.Request, id string) {
 	var product models.Product
 	if err := database.DB.First(&product, "id = ?", id).Error; err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "product not found"})
+		writeJSON(w, http.StatusNotFound, errorResponse{Error: "product not found"})
 		return
 	}
 
 	var input updateProductInput
-	if err := c.ShouldBindJSON(&input); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+		writeJSON(w, http.StatusBadRequest, errorResponse{Error: err.Error()})
 		return
 	}
 
@@ -120,32 +159,30 @@ func updateProductByID(c *gin.Context) {
 	}
 
 	if len(updates) == 0 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "no fields to update"})
+		writeJSON(w, http.StatusBadRequest, errorResponse{Error: "no fields to update"})
 		return
 	}
 
 	if err := database.DB.Model(&product).Updates(updates).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		writeJSON(w, http.StatusInternalServerError, errorResponse{Error: err.Error()})
 		return
 	}
 
-	c.Status(http.StatusNoContent)
+	w.WriteHeader(http.StatusNoContent)
 }
 
-func deleteProductByID(c *gin.Context) {
-	id := c.Param("id")
-
+func deleteProductByID(w http.ResponseWriter, r *http.Request, id string) {
 	var product models.Product
 	if err := database.DB.First(&product, "id = ?", id).Error; err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "product not found"})
+		writeJSON(w, http.StatusNotFound, errorResponse{Error: "product not found"})
 		return
 	}
 
 	now := time.Now()
 	if err := database.DB.Model(&product).Update("deleted_at", now).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		writeJSON(w, http.StatusInternalServerError, errorResponse{Error: err.Error()})
 		return
 	}
 
-	c.Status(http.StatusNoContent)
+	w.WriteHeader(http.StatusNoContent)
 }

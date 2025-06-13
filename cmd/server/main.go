@@ -2,9 +2,8 @@ package main
 
 import (
 	"log"
+	"net/http"
 	"os"
-
-	"github.com/gin-gonic/gin"
 
 	"github.com/Broukt/api-rest-test/internal/database"
 	"github.com/Broukt/api-rest-test/internal/handlers"
@@ -17,15 +16,15 @@ func main() {
 	}
 	database.AutoMigrate(&models.Product{})
 
-	r := gin.Default()
-	handlers.RegisterProductRoutes(r)
+	mux := http.NewServeMux()
+	handlers.RegisterProductRoutes(mux)
 
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = "8080"
 	}
 
-	if err := r.Run(":" + port); err != nil {
+	if err := http.ListenAndServe(":"+port, mux); err != nil {
 		log.Fatalf("server failed: %v", err)
 	}
 }
