@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"net/http"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/Broukt/api-rest-test/internal/database"
@@ -13,8 +12,11 @@ import (
 
 // RegisterProductRoutes registers all product related endpoints using net/http.
 func RegisterProductRoutes(mux *http.ServeMux) {
-	mux.HandleFunc("/products", productsHandler)
-	mux.HandleFunc("/products/", productHandler)
+	mux.HandleFunc("GET /products", getProducts)
+	mux.HandleFunc("POST /products", createProduct)
+	mux.HandleFunc("GET /products/{id}", getProductByID)
+	mux.HandleFunc("PUT /products/{id}", updateProductByID)
+	mux.HandleFunc("DELETE /products/{id}", deleteProductByID)
 }
 
 type errorResponse struct {
@@ -29,37 +31,8 @@ func writeJSON(w http.ResponseWriter, status int, data interface{}) {
 	}
 }
 
-func productsHandler(w http.ResponseWriter, r *http.Request) {
-	switch r.Method {
-	case http.MethodGet:
-		getProducts(w, r)
-	case http.MethodPost:
-		createProduct(w, r)
-	default:
-		w.WriteHeader(http.StatusMethodNotAllowed)
-	}
-}
-
-func productHandler(w http.ResponseWriter, r *http.Request) {
-	id := strings.TrimPrefix(r.URL.Path, "/products/")
-	if id == "" || strings.Contains(id, "/") {
-		http.NotFound(w, r)
-		return
-	}
-
-	switch r.Method {
-	case http.MethodGet:
-		getProductByID(w, r, id)
-	case http.MethodPut:
-		updateProductByID(w, r, id)
-	case http.MethodDelete:
-		deleteProductByID(w, r, id)
-	default:
-		w.WriteHeader(http.StatusMethodNotAllowed)
-	}
-}
-
-func getProductByID(w http.ResponseWriter, r *http.Request, id string) {
+func getProductByID(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
 	var product models.Product
 	if err := database.DB.First(&product, "id = ?", id).Error; err != nil {
 		writeJSON(w, http.StatusNotFound, errorResponse{Error: "product not found"})
@@ -131,7 +104,8 @@ type updateProductInput struct {
 	Stock *int     `json:"stock"`
 }
 
-func updateProductByID(w http.ResponseWriter, r *http.Request, id string) {
+func updateProductByID(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
 	var product models.Product
 	if err := database.DB.First(&product, "id = ?", id).Error; err != nil {
 		writeJSON(w, http.StatusNotFound, errorResponse{Error: "product not found"})
@@ -171,7 +145,8 @@ func updateProductByID(w http.ResponseWriter, r *http.Request, id string) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func deleteProductByID(w http.ResponseWriter, r *http.Request, id string) {
+func deleteProductByID(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
 	var product models.Product
 	if err := database.DB.First(&product, "id = ?", id).Error; err != nil {
 		writeJSON(w, http.StatusNotFound, errorResponse{Error: "product not found"})
